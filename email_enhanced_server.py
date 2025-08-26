@@ -58,7 +58,7 @@ EMAIL_CONFIG = {
     'imap_port': 993,
     'username': os.getenv('EMAIL_USER'),
     'password': os.getenv('EMAIL_PASSWORD'),
-    'allowed_sender': 'dhananjayshahahne24@gmail.com'  # Filter emails only from this address
+    'allowed_sender': 'dhananjayshahane24@gmail.com'  # Filter emails only from this address
 }
 
 OLLAMA_CONFIG = {
