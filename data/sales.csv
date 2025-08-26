@@ -1,0 +1,21 @@
+date,product,category,sales_amount,quantity,region,salesperson
+2024-01-15,Product A,Electronics,1200.50,5,North,John Smith
+2024-01-15,Product B,Clothing,850.25,12,South,Jane Doe
+2024-01-16,Product C,Electronics,2100.75,3,East,Mike Johnson
+2024-01-16,Product A,Electronics,1200.50,4,West,Sarah Wilson
+2024-01-17,Product D,Home & Garden,675.00,8,North,John Smith
+2024-01-17,Product B,Clothing,850.25,15,South,Jane Doe
+2024-01-18,Product E,Books,125.99,25,East,Mike Johnson
+2024-01-18,Product C,Electronics,2100.75,2,North,John Smith
+2024-01-19,Product F,Sports,456.80,6,West,Sarah Wilson
+2024-01-19,Product A,Electronics,1200.50,7,South,Jane Doe
+2024-01-20,Product G,Beauty,789.90,10,East,Mike Johnson
+2024-01-20,Product D,Home & Garden,675.00,5,North,John Smith
+2024-01-21,Product H,Automotive,3200.00,1,West,Sarah Wilson
+2024-01-21,Product B,Clothing,850.25,20,South,Jane Doe
+2024-01-22,Product I,Toys,234.50,18,East,Mike Johnson
+2024-01-22,Product E,Books,125.99,30,North,John Smith
+2024-01-23,Product J,Food,89.75,45,West,Sarah Wilson
+2024-01-23,Product C,Electronics,2100.75,4,South,Jane Doe
+2024-01-24,Product K,Health,567.25,8,East,Mike Johnson
+2024-01-24,Product F,Sports,456.80,12,North,John Smith

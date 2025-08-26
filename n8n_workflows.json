@@ -1,0 +1,235 @@
+{
+  "name": "MCP Email Automation Workflows",
+  "version": 1,
+  "workflows": [
+    {
+      "id": "email_processor",
+      "name": "Email Processing Workflow",
+      "description": "Process incoming emails and trigger MCP server tools",
+      "nodes": [
+        {
+          "id": "email_trigger",
+          "type": "EmailTrigger",
+          "name": "Email Trigger",
+          "parameters": {
+            "pollTime": 60,
+            "format": "simple",
+            "download": false
+          },
+          "credentials": {
+            "imap": "email_credentials"
+          }
+        },
+        {
+          "id": "email_parser",
+          "type": "Function",
+          "name": "Parse Email Content",
+          "parameters": {
+            "functionCode": "// Parse email for data analysis requests\nconst subject = items[0].json.subject;\nconst body = items[0].json.text;\nconst from = items[0].json.from;\n\n// Extract keywords for analysis\nconst analysisKeywords = ['chart', 'graph', 'plot', 'analyze', 'statistics', 'report', 'data'];\nconst visualizationKeywords = ['bar chart', 'line graph', 'pie chart', 'scatter plot'];\n\nconst isAnalysisRequest = analysisKeywords.some(keyword => \n  subject.toLowerCase().includes(keyword) || body.toLowerCase().includes(keyword)\n);\n\nconst requestType = visualizationKeywords.find(keyword => \n  body.toLowerCase().includes(keyword)\n) || 'general_analysis';\n\n// Extract data file references\nconst dataFileMatch = body.match(/data[/\\\\]([\\w\\.]+\\.csv)/i);\nconst dataFile = dataFileMatch ? dataFileMatch[1] : null;\n\nreturn [{\n  json: {\n    from: from,\n    subject: subject,\n    body: body,\n    isAnalysisRequest: isAnalysisRequest,\n    requestType: requestType,\n    dataFile: dataFile,\n    timestamp: new Date().toISOString()\n  }\n}];"
+          }
+        },
+        {
+          "id": "mcp_router",
+          "type": "Switch",
+          "name": "Route Request Type",
+          "parameters": {
+            "conditions": {
+              "number": 1,
+              "value": "={{$json.isAnalysisRequest}}"
+            }
+          }
+        },
+        {
+          "id": "mcp_execute_tool",
+          "type": "HttpRequest",
+          "name": "Execute MCP Tool",
+          "parameters": {
+            "method": "POST",
+            "url": "http://localhost:8000/mcp/tools/execute",
+            "sendHeaders": true,
+            "headerParameters": {
+              "parameters": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "name": "Authorization",
+                  "value": "Bearer {{$env.MCP_API_KEY}}"
+                }
+              ]
+            },
+            "sendBody": true,
+            "bodyParameters": {
+              "parameters": [
+                {
+                  "name": "tool_name",
+                  "value": "={{$json.requestType === 'general_analysis' ? 'analyze_data_with_ollama' : 'execute_script'}}"
+                },
+                {
+                  "name": "parameters",
+                  "value": "={{$json.requestType === 'general_analysis' ? {data_description: $json.dataFile, query: $json.body} : {script_name: $json.requestType + '.py', args: [$json.dataFile]}}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "result_formatter",
+          "type": "Function",
+          "name": "Format Response",
+          "parameters": {
+            "functionCode": "// Format the MCP tool response for email reply\nconst mcpResponse = items[0].json;\nconst originalRequest = items[0].json.originalRequest;\n\nlet responseBody = `Hello,\\n\\nThank you for your data analysis request.\\n\\n`;\n\nif (mcpResponse.success) {\n  responseBody += `Analysis Results:\\n${mcpResponse.output || mcpResponse.analysis}\\n\\n`;\n  \n  if (mcpResponse.script_name) {\n    responseBody += `Generated using: ${mcpResponse.script_name}\\n`;\n  }\n} else {\n  responseBody += `I encountered an error processing your request:\\n${mcpResponse.error}\\n\\n`;\n  responseBody += `Please check your request and try again.\\n`;\n}\n\nresponseBody += `\\nBest regards,\\nMCP Data Analysis Server`;\n\nreturn [{\n  json: {\n    to: originalRequest.from,\n    subject: `Re: ${originalRequest.subject}`,\n    body: responseBody,\n    attachments: mcpResponse.attachments || []\n  }\n}];"
+          }
+        },
+        {
+          "id": "send_reply",
+          "type": "EmailSend",
+          "name": "Send Email Reply",
+          "parameters": {
+            "fromEmail": "{{$env.EMAIL_USERNAME}}",
+            "toEmail": "={{$json.to}}",
+            "subject": "={{$json.subject}}",
+            "text": "={{$json.body}}",
+            "attachments": "={{$json.attachments}}"
+          },
+          "credentials": {
+            "smtp": "email_credentials"
+          }
+        }
+      ],
+      "connections": [
+        {
+          "source": "email_trigger",
+          "target": "email_parser"
+        },
+        {
+          "source": "email_parser",
+          "target": "mcp_router"
+        },
+        {
+          "source": "mcp_router",
+          "target": "mcp_execute_tool",
+          "condition": "true"
+        },
+        {
+          "source": "mcp_execute_tool",
+          "target": "result_formatter"
+        },
+        {
+          "source": "result_formatter",
+          "target": "send_reply"
+        }
+      ]
+    },
+    {
+      "id": "health_monitor",
+      "name": "System Health Monitor",
+      "description": "Monitor MCP server health and send alerts",
+      "nodes": [
+        {
+          "id": "health_trigger",
+          "type": "Cron",
+          "name": "Health Check Schedule",
+          "parameters": {
+            "triggerTimes": {
+              "item": [
+                {
+                  "mode": "everyMinute",
+                  "minute": 5
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "health_check",
+          "type": "HttpRequest",
+          "name": "Check MCP Server Health",
+          "parameters": {
+            "method": "GET",
+            "url": "http://localhost:8000/health",
+            "timeout": 10
+          }
+        },
+        {
+          "id": "health_evaluation",
+          "type": "Function",
+          "name": "Evaluate Health Status",
+          "parameters": {
+            "functionCode": "// Evaluate server health and determine if alert needed\nconst response = items[0];\nconst isHealthy = response.json && response.json.status === 'healthy';\nconst timestamp = new Date().toISOString();\n\n// Check for consecutive failures (stored in workflow memory)\nconst failureCount = $workflow.failure_count || 0;\nconst newFailureCount = isHealthy ? 0 : failureCount + 1;\n\n$workflow.failure_count = newFailureCount;\n\nconst shouldAlert = newFailureCount >= 3; // Alert after 3 consecutive failures\n\nreturn [{\n  json: {\n    isHealthy: isHealthy,\n    failureCount: newFailureCount,\n    shouldAlert: shouldAlert,\n    timestamp: timestamp,\n    lastResponse: response.json\n  }\n}];"
+          }
+        },
+        {
+          "id": "alert_condition",
+          "type": "Switch",
+          "name": "Should Send Alert",
+          "parameters": {
+            "conditions": {
+              "boolean": [
+                {
+                  "value1": "={{$json.shouldAlert}}",
+                  "value2": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "send_alert",
+          "type": "EmailSend",
+          "name": "Send Health Alert",
+          "parameters": {
+            "fromEmail": "{{$env.EMAIL_USERNAME}}",
+            "toEmail": "{{$env.ADMIN_EMAIL}}",
+            "subject": "MCP Server Health Alert",
+            "text": "The MCP Data Analysis Server has been unresponsive for {{$json.failureCount}} consecutive health checks.\\n\\nTimestamp: {{$json.timestamp}}\\n\\nPlease investigate the server status."
+          },
+          "credentials": {
+            "smtp": "email_credentials"
+          }
+        }
+      ],
+      "connections": [
+        {
+          "source": "health_trigger",
+          "target": "health_check"
+        },
+        {
+          "source": "health_check",
+          "target": "health_evaluation"
+        },
+        {
+          "source": "health_evaluation",
+          "target": "alert_condition"
+        },
+        {
+          "source": "alert_condition",
+          "target": "send_alert",
+          "condition": "true"
+        }
+      ]
+    }
+  ],
+  "credentials": [
+    {
+      "id": "email_credentials",
+      "name": "Email Account",
+      "type": "smtp",
+      "data": {
+        "user": "{{$env.EMAIL_USERNAME}}",
+        "password": "{{$env.EMAIL_PASSWORD}}",
+        "host": "{{$env.SMTP_SERVER}}",
+        "port": "{{$env.SMTP_PORT}}",
+        "secure": false,
+        "tls": true
+      }
+    }
+  ],
+  "settings": {
+    "timezone": "UTC",
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

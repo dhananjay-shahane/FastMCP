@@ -1,0 +1,16 @@
+user_id,username,email,registration_date,last_login,subscription_type,country,age_group
+1001,alice_johnson,alice.johnson@email.com,2023-06-15,2024-01-20,premium,USA,25-34
+1002,bob_smith,bob.smith@email.com,2023-07-22,2024-01-19,free,Canada,35-44
+1003,carol_davis,carol.davis@email.com,2023-08-10,2024-01-21,basic,UK,45-54
+1004,david_wilson,david.wilson@email.com,2023-09-05,2024-01-18,premium,Australia,25-34
+1005,emma_brown,emma.brown@email.com,2023-10-12,2024-01-22,free,Germany,18-24
+1006,frank_miller,frank.miller@email.com,2023-11-18,2024-01-17,basic,France,35-44
+1007,grace_taylor,grace.taylor@email.com,2023-12-03,2024-01-23,premium,Japan,25-34
+1008,henry_anderson,henry.anderson@email.com,2024-01-08,2024-01-24,free,Brazil,45-54
+1009,isabel_garcia,isabel.garcia@email.com,2024-01-15,2024-01-24,basic,Spain,18-24
+1010,jack_martinez,jack.martinez@email.com,2024-01-20,2024-01-24,premium,Mexico,35-44
+1011,kate_rodriguez,kate.rodriguez@email.com,2023-05-30,2024-01-16,free,USA,25-34
+1012,liam_thomas,liam.thomas@email.com,2023-06-25,2024-01-21,basic,Canada,45-54
+1013,mia_jackson,mia.jackson@email.com,2023-07-15,2024-01-19,premium,UK,18-24
+1014,noah_white,noah.white@email.com,2023-08-28,2024-01-22,free,Australia,35-44
+1015,olivia_harris,olivia.harris@email.com,2023-09-20,2024-01-18,basic,Germany,25-34
