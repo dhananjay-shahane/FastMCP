@@ -457,6 +457,48 @@ Your Data Analysis Assistant"""
 email_handler = EmailHandler(EMAIL_CONFIG)
 ollama_llm = OllamaLLM(OLLAMA_CONFIG)
 
+# Helper functions for MCP tools
+async def get_data_summary() -> Dict[str, Any]:
+    """Get summary of available data files and their structure"""
+    try:
+        csv_files = []
+        for csv_file in DATA_DIR.glob('*.csv'):
+            try:
+                import pandas as pd
+                df = pd.read_csv(csv_file)
+                csv_files.append({
+                    'name': csv_file.name,
+                    'rows': len(df),
+                    'columns': list(df.columns),
+                    'size': csv_file.stat().st_size
+                })
+            except Exception as e:
+                csv_files.append({
+                    'name': csv_file.name,
+                    'error': str(e)
+                })
+        
+        return {
+            'csv_files': csv_files,
+            'total_files': len(csv_files)
+        }
+    except Exception as e:
+        return {'error': str(e), 'csv_files': []}
+
+async def get_available_csv_files() -> List[str]:
+    """Get list of available CSV files"""
+    try:
+        return [f.name for f in DATA_DIR.glob('*.csv')]
+    except:
+        return []
+
+async def get_available_scripts() -> List[str]:
+    """Get list of available Python scripts"""
+    try:
+        return [f.name for f in SCRIPTS_DIR.glob('*.py')]
+    except:
+        return []
+
 # Resources - CSV files and scripts (keeping existing functionality)
 @mcp.resource("file://data/{filename}")
 async def read_csv_resource(filename: str) -> str:
@@ -567,8 +609,8 @@ async def check_filtered_emails(limit: int = 5, ctx: Context | None = None) -> D
         }
 
 @mcp.tool()
-async def process_email_with_llm(email_content: str, sender: str, subject: str, ctx: Context | None = None) -> Dict[str, Any]:
-    """Process email content with Ollama LLM and generate response"""
+async def analyze_email_request(email_content: str, sender: str, subject: str, ctx: Context | None = None) -> Dict[str, Any]:
+    """Analyze email content with LLM to understand data analysis requests and provide intelligent responses"""
     try:
         # Check if Ollama is available
         if not await ollama_llm.is_available():
@@ -577,9 +619,28 @@ async def process_email_with_llm(email_content: str, sender: str, subject: str, 
                 "error": "Ollama LLM server is not available"
             }
         
-        # Generate response using Ollama
-        context = f"Email from: {sender}, Subject: {subject}"
-        llm_response = await ollama_llm.generate_response(email_content, context)
+        # Get available data and analyze request intent
+        available_data = await get_data_summary()
+        
+        # Enhanced context for LLM
+        enhanced_context = f"""
+Email Analysis Context:
+- Sender: {sender}
+- Subject: {subject}
+- Available CSV files: {available_data['csv_files']}
+- Available visualization types: Bar charts, Line graphs, Pie charts, Statistical analysis
+
+Your role: Intelligent data analysis assistant. If user requests visualization:
+1. If request is vague (just "make a graph"), ask for specific details
+2. If request is specific, confirm what you'll create
+3. Always be helpful and professional
+4. Mention available data files if they ask about data
+"""
+        
+        llm_response = await ollama_llm.generate_response(email_content, enhanced_context)
+        
+        # Analyze the request type
+        request_analysis = await analyze_request_intent(email_content, available_data)
         
         logger.info(f"Generated LLM response for email from {sender}")
         return {
@@ -590,14 +651,243 @@ async def process_email_with_llm(email_content: str, sender: str, subject: str, 
                 "content": email_content
             },
             "llm_response": llm_response,
-            "model_used": OLLAMA_CONFIG['model']
+            "request_analysis": request_analysis,
+            "model_used": OLLAMA_CONFIG['model'],
+            "available_data": available_data
         }
         
     except Exception as e:
         logger.error(f"Error processing email with LLM: {str(e)}")
         return {
             "success": False,
-            "error": f"Failed to process email: {str(e)}"
+            "error": f"Failed to analyze email: {str(e)}"
+        }
+
+async def analyze_request_intent(email_content: str, available_data: Dict) -> Dict[str, Any]:
+    """Analyze email content to understand what the user wants"""
+    content_lower = email_content.lower()
+    
+    analysis = {
+        'intent': 'general_inquiry',
+        'visualization_type': None,
+        'data_file_mentioned': None,
+        'columns_mentioned': [],
+        'needs_clarification': False,
+        'clarification_needed': []
+    }
+    
+    # Check for visualization keywords
+    viz_keywords = {
+        'bar': 'bar_chart',
+        'column': 'bar_chart', 
+        'line': 'line_graph',
+        'trend': 'line_graph',
+        'pie': 'pie_chart',
+        'donut': 'pie_chart',
+        'stats': 'statistics',
+        'statistics': 'statistics'
+    }
+    
+    for keyword, viz_type in viz_keywords.items():
+        if keyword in content_lower:
+            analysis['intent'] = 'visualization_request'
+            analysis['visualization_type'] = viz_type
+            break
+    
+    # Check for data file mentions
+    available_files = [f['name'] for f in available_data.get('csv_files', [])]
+    for file_name in available_files:
+        if file_name.lower() in content_lower:
+            analysis['data_file_mentioned'] = file_name
+            break
+    
+    # Check if request is too vague
+    if analysis['intent'] == 'visualization_request':
+        vague_requests = ['graph', 'chart', 'visualization', 'plot']
+        is_vague = any(word in content_lower for word in vague_requests)
+        
+        if is_vague and not analysis['data_file_mentioned']:
+            analysis['needs_clarification'] = True
+            analysis['clarification_needed'].append('Which data file to use')
+        
+        if is_vague and not any(col in content_lower for file in available_data.get('csv_files', []) for col in file.get('columns', [])):
+            analysis['needs_clarification'] = True
+            analysis['clarification_needed'].append('Which columns to analyze')
+    
+    return analysis
+
+@mcp.tool()
+async def get_data_file_info(filename: str, ctx: Context | None = None) -> Dict[str, Any]:
+    """Get detailed information about a specific CSV file"""
+    try:
+        import pandas as pd
+        file_path = DATA_DIR / filename
+        
+        if not file_path.exists():
+            return {
+                "success": False,
+                "error": f"File {filename} not found in data directory"
+            }
+        
+        df = pd.read_csv(file_path)
+        
+        # Get column info with sample data
+        column_info = {}
+        for col in df.columns:
+            column_info[col] = {
+                'type': str(df[col].dtype),
+                'non_null_count': int(df[col].count()),
+                'unique_values': int(df[col].nunique()),
+                'sample_values': df[col].dropna().head(3).tolist()
+            }
+        
+        return {
+            "success": True,
+            "filename": filename,
+            "rows": len(df),
+            "columns": list(df.columns),
+            "column_info": column_info,
+            "preview": df.head(3).to_dict('records')
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting file info for {filename}: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+@mcp.tool()
+async def execute_data_analysis(script_name: str, data_file: str, parameters: Dict[str, Any] = None, ctx: Context | None = None) -> Dict[str, Any]:
+    """Execute data analysis script with specified parameters"""
+    try:
+        import subprocess
+        import sys
+        
+        script_path = SCRIPTS_DIR / script_name
+        data_path = DATA_DIR / data_file
+        
+        if not script_path.exists():
+            return {
+                "success": False,
+                "error": f"Script {script_name} not found"
+            }
+        
+        if not data_path.exists():
+            return {
+                "success": False,
+                "error": f"Data file {data_file} not found"
+            }
+        
+        # Execute script
+        result = subprocess.run(
+            [sys.executable, str(script_path), str(data_path)],
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
+        
+        if result.returncode == 0:
+            # Find generated output files
+            from datetime import datetime
+            timestamp = datetime.now().strftime('%Y%m%d')
+            output_files = list(OUTPUT_DIR.glob(f'*{timestamp}*.png'))
+            
+            return {
+                "success": True,
+                "script_output": result.stdout,
+                "generated_files": [str(f) for f in output_files],
+                "script_name": script_name,
+                "data_file": data_file
+            }
+        else:
+            return {
+                "success": False,
+                "error": f"Script execution failed: {result.stderr}",
+                "script_output": result.stdout
+            }
+    
+    except Exception as e:
+        logger.error(f"Error executing analysis: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+@mcp.tool()
+async def generate_intelligent_response(email_content: str, sender: str, subject: str, analysis_results: Dict[str, Any] = None, ctx: Context | None = None) -> Dict[str, Any]:
+    """Generate intelligent, formatted email response using LLM with analysis context"""
+    try:
+        # Get comprehensive context
+        data_summary = await get_data_summary()
+        
+        # Create detailed prompt for LLM
+        system_context = f"""
+You are a professional data analysis assistant. Respond to emails in a helpful, clear manner.
+
+Available Data:
+{data_summary}
+
+Your capabilities:
+- Generate bar charts, line graphs, pie charts from CSV data
+- Provide statistical analysis and insights
+- Create timestamped PNG visualizations
+- Answer questions about available data
+
+Email Context:
+From: {sender}
+Subject: {subject}
+Content: {email_content}
+
+Instructions:
+1. If they request visualization but are vague, ask for specific details:
+   - Which data file?
+   - Which columns to analyze?
+   - What type of chart?
+2. If they provide specific details, confirm what you'll create
+3. Always be professional and helpful
+4. Keep responses concise but informative
+5. If analysis was performed, mention the results
+
+Generate a professional email response:"""
+        
+        # Add analysis results to context if available
+        if analysis_results:
+            system_context += f"\n\nAnalysis Results: {analysis_results}"
+        
+        response = await ollama_llm.generate_response(email_content, system_context)
+        
+        return {
+            "success": True,
+            "response_content": response,
+            "sender": sender,
+            "subject": subject,
+            "has_analysis_results": bool(analysis_results)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error generating intelligent response: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e),
+            "fallback_response": f"""Hello!
+
+Thank you for your email. I'm an AI assistant for data analysis and visualization.
+
+I can help you with:
+- Creating charts from CSV data (bar, line, pie charts)
+- Statistical analysis and reports
+- Data visualization with timestamped PNG outputs
+
+Available data files: {', '.join(await get_available_csv_files())}
+
+For chart requests, please specify:
+1. Which data file to use
+2. Which columns to analyze
+3. Type of visualization needed
+
+Best regards,
+Data Analysis Assistant"""
         }
 
 @mcp.tool()
