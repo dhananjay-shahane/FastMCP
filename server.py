@@ -105,7 +105,7 @@ async def read_script_resource(filename: str) -> str:
 
 # Tools - Script execution and email functionality
 @mcp.tool()
-async def execute_script(script_name: str, args: List[str] = [], ctx: Context = None) -> Dict[str, Any]:
+async def execute_script(script_name: str, args: List[str] = [], ctx: Context | None = None) -> Dict[str, Any]:
     """Execute Python scripts dynamically and return results"""
     try:
         if args is None:
@@ -164,7 +164,7 @@ async def execute_script(script_name: str, args: List[str] = [], ctx: Context = 
         }
 
 @mcp.tool()
-async def send_email(to: str, subject: str, body: str, attachments: List[str] = [], ctx: Context = None) -> Dict[str, Any]:
+async def send_email(to: str, subject: str, body: str, attachments: List[str] = [], ctx: Context | None = None) -> Dict[str, Any]:
     """Send email with optional attachments"""
     try:
         if attachments is None:
@@ -218,7 +218,7 @@ async def send_email(to: str, subject: str, body: str, attachments: List[str] = 
         }
 
 @mcp.tool()
-async def analyze_data_with_ollama(data_description: str, query: str, ctx: Context = None) -> Dict[str, Any]:
+async def analyze_data_with_ollama(data_description: str, query: str, ctx: Context | None = None) -> Dict[str, Any]:
     """Use Ollama LLM to analyze data and provide insights"""
     try:
         prompt = f"""
@@ -251,7 +251,7 @@ async def analyze_data_with_ollama(data_description: str, query: str, ctx: Conte
         }
 
 @mcp.tool()
-async def list_available_resources(ctx: Context = None) -> Dict[str, Any]:
+async def list_available_resources(ctx: Context | None = None) -> Dict[str, Any]:
     """List all available CSV files and Python scripts"""
     try:
         csv_files = []
@@ -284,7 +284,7 @@ async def list_available_resources(ctx: Context = None) -> Dict[str, Any]:
         }
 
 @mcp.tool()
-async def get_system_status(ctx: Context = None) -> Dict[str, Any]:
+async def get_system_status(ctx: Context | None = None) -> Dict[str, Any]:
     """Get system status and health information"""
     try:
         # Check Ollama connection

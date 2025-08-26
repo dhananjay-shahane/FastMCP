@@ -90,7 +90,9 @@ class EmailHandler:
         """Get emails only from allowed sender"""
         try:
             if not self.imap_server:
-                await self.connect_imap()
+                connected = await self.connect_imap()
+                if not connected or not self.imap_server:
+                    return []
             
             self.imap_server.select(folder)
             
@@ -107,7 +109,9 @@ class EmailHandler:
             # Get latest emails (limited)
             for email_id in email_ids[-limit:]:
                 status, msg_data = self.imap_server.fetch(email_id, '(RFC822)')
-                if status == 'OK':
+                if (status == 'OK' and msg_data and isinstance(msg_data, list) and 
+                    len(msg_data) > 0 and msg_data[0] and isinstance(msg_data[0], tuple) and 
+                    len(msg_data[0]) > 1 and isinstance(msg_data[0][1], bytes)):
                     email_message = email_module.message_from_bytes(msg_data[0][1])
                     
                     # Decode subject
@@ -181,8 +185,9 @@ class OllamaLLM:
     async def is_available(self):
         """Check if Ollama server is available"""
         try:
+            timeout = aiohttp.ClientTimeout(total=5)
             async with aiohttp.ClientSession() as session:
-                async with session.get(f"{self.base_url}/api/tags", timeout=5) as response:
+                async with session.get(f"{self.base_url}/api/tags", timeout=timeout) as response:
                     return response.status == 200
         except Exception as e:
             logger.error(f"Ollama server not available: {str(e)}")
@@ -271,7 +276,7 @@ async def read_script_resource(filename: str) -> str:
 
 # Email Tools
 @mcp.tool()
-async def check_filtered_emails(limit: int = 5, ctx: Context = None) -> Dict[str, Any]:
+async def check_filtered_emails(limit: int = 5, ctx: Context | None = None) -> Dict[str, Any]:
     """Check for new emails from allowed sender only"""
     try:
         emails = await email_handler.get_filtered_emails(limit=limit)
@@ -292,7 +297,7 @@ async def check_filtered_emails(limit: int = 5, ctx: Context = None) -> Dict[str
         }
 
 @mcp.tool()
-async def process_email_with_llm(email_content: str, sender: str, subject: str, ctx: Context = None) -> Dict[str, Any]:
+async def process_email_with_llm(email_content: str, sender: str, subject: str, ctx: Context | None = None) -> Dict[str, Any]:
     """Process email content with Ollama LLM and generate response"""
     try:
         # Check if Ollama is available
@@ -326,7 +331,7 @@ async def process_email_with_llm(email_content: str, sender: str, subject: str, 
         }
 
 @mcp.tool()
-async def send_automated_reply(to_email: str, subject: str, response_content: str, ctx: Context = None) -> Dict[str, Any]:
+async def send_automated_reply(to_email: str, subject: str, response_content: str, ctx: Context | None = None) -> Dict[str, Any]:
     """Send automated reply email"""
     try:
         # Verify recipient is the allowed sender
@@ -362,7 +367,7 @@ async def send_automated_reply(to_email: str, subject: str, response_content: st
         }
 
 @mcp.tool()
-async def check_and_respond_to_emails(ctx: Context = None) -> Dict[str, Any]:
+async def check_and_respond_to_emails(ctx: Context | None = None) -> Dict[str, Any]:
     """Complete workflow: Check emails, process with LLM, and send responses"""
     try:
         # Check for new emails
@@ -420,7 +425,7 @@ async def check_and_respond_to_emails(ctx: Context = None) -> Dict[str, Any]:
 
 # System Tools
 @mcp.tool()
-async def check_system_status(ctx: Context = None) -> Dict[str, Any]:
+async def check_system_status(ctx: Context | None = None) -> Dict[str, Any]:
     """Check system status including email and LLM connectivity"""
     try:
         # Check Ollama availability
@@ -460,7 +465,7 @@ async def check_system_status(ctx: Context = None) -> Dict[str, Any]:
 
 # Keep existing script execution tools
 @mcp.tool()
-async def execute_script(script_name: str, args: List[str] = [], ctx: Context = None) -> Dict[str, Any]:
+async def execute_script(script_name: str, args: List[str] = [], ctx: Context | None = None) -> Dict[str, Any]:
     """Execute Python scripts dynamically and return results"""
     try:
         if args is None:
@@ -517,7 +522,7 @@ async def execute_script(script_name: str, args: List[str] = [], ctx: Context = 
         }
 
 @mcp.tool()
-async def list_available_resources(ctx: Context = None) -> Dict[str, Any]:
+async def list_available_resources(ctx: Context | None = None) -> Dict[str, Any]:
     """List all available CSV files and Python scripts"""
     try:
         csv_files = []
