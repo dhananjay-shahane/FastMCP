@@ -22,6 +22,10 @@ args = "Flask Web Dashboard"
 task = "workflow.run"
 args = "MCP Server"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "HTTP MCP Server"
+
 [[workflows.workflow]]
 name = "Flask Web Dashboard"
 author = "agent"
@@ -45,6 +49,26 @@ outputType = "console"
 task = "shell.exec"
 args = "python server.py"
 
+[[workflows.workflow]]
+name = "HTTP MCP Server"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python http_mcp_server.py"
+waitForPort = 8001
+
+[workflows.workflow.metadata]
+outputType = "console"
+
 [[ports]]
 localPort = 5000
 externalPort = 80
+
+[[ports]]
+localPort = 8000
+externalPort = 8000
+
+[[ports]]
+localPort = 8001
+externalPort = 3000
