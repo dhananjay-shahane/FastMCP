@@ -190,7 +190,7 @@ class OllamaLLM:
                 async with session.get(f"{self.base_url}/api/tags", timeout=timeout) as response:
                     return response.status == 200
         except Exception as e:
-            logger.error(f"Ollama server not available: {str(e)}")
+            logger.warning(f"Ollama server not available: {str(e)}")
             return False
     
     async def generate_response(self, prompt: str, context: str = ""):
@@ -232,8 +232,31 @@ Please provide a helpful response:"""
                         return "Sorry, there was an error generating the response."
                         
         except Exception as e:
-            logger.error(f"Error generating Ollama response: {str(e)}")
-            return "Sorry, I'm currently unable to process your request."
+            logger.warning(f"Error generating Ollama response: {str(e)}")
+            # Fallback response when Ollama is unavailable
+            return f"""Thank you for your email! 
+
+I'm an AI assistant for data analysis and visualization. I can help you with:
+
+📊 **Data Visualization Services:**
+- Bar charts, line graphs, and pie charts from CSV data
+- High-quality PNG outputs with timestamps
+- Statistical analysis and insights
+
+📁 **Currently Available:**
+- CSV files in the data directory
+- Python analysis scripts (bar_chart.py, line_graph.py, pie_chart.py)
+- Automated report generation
+
+To use these services, please:
+1. Upload your CSV data files
+2. Specify what type of visualization you need
+3. I'll generate timestamped PNG files for you
+
+The system will be back to full AI-powered responses once Ollama is running locally. For immediate assistance, please specify your data analysis needs.
+
+Best regards,
+Your Data Analysis Assistant"""
 
 # Initialize handlers
 email_handler = EmailHandler(EMAIL_CONFIG)

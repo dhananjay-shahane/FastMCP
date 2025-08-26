@@ -4,7 +4,7 @@ expertMode = true
 
 [nix]
 channel = "stable-25_05"
-packages = ["cairo", "ffmpeg-full", "freetype", "ghostscript", "glibcLocales", "gobject-introspection", "gtk3", "libxcrypt", "libyaml", "pkg-config", "qhull", "tcl", "tk", "xsimd"]
+packages = ["cairo", "ffmpeg-full", "freetype", "ghostscript", "glibcLocales", "gobject-introspection", "gtk3", "libxcrypt", "libyaml", "pkg-config", "qhull", "tcl", "tk", "xsimd", "ollama"]
 
 [workflows]
 runButton = "Project"
@@ -29,6 +29,10 @@ args = "HTTP MCP Server"
 [[workflows.workflow.tasks]]
 task = "workflow.run"
 args = "Email Enhanced MCP Server"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Ollama Server"
 
 [[workflows.workflow]]
 name = "Flask Web Dashboard"
@@ -72,6 +76,18 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python email_enhanced_server.py"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow]]
+name = "Ollama Server"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "ollama serve"
+waitForPort = 11434
 
 [workflows.workflow.metadata]
 outputType = "console"
