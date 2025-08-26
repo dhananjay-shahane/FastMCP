@@ -22,7 +22,10 @@ from dotenv import load_dotenv
 import email as email_module
 from email.mime.text import MIMEText as MimeText
 from email.mime.multipart import MIMEMultipart as MimeMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 from email.header import decode_header
+import mimetypes
 
 try:
     from fastmcp import FastMCP, Context
@@ -150,8 +153,8 @@ class EmailHandler:
             logger.error(f"Error extracting email body: {str(e)}")
             return ""
     
-    async def send_email(self, to_email: str, subject: str, body: str):
-        """Send email response"""
+    async def send_email(self, to_email: str, subject: str, body: str, attachments=None):
+        """Send email response with optional attachments"""
         try:
             msg = MimeMultipart()
             msg['From'] = self.config['username']
@@ -160,18 +163,54 @@ class EmailHandler:
             
             msg.attach(MimeText(body, 'plain'))
             
+            # Add attachments if provided
+            if attachments:
+                for attachment_path in attachments:
+                    if Path(attachment_path).exists():
+                        self._attach_file(msg, attachment_path)
+                        logger.info(f"Added attachment: {attachment_path}")
+                    else:
+                        logger.warning(f"Attachment not found: {attachment_path}")
+            
             server = smtplib.SMTP(self.config['smtp_server'], self.config['smtp_port'])
             server.starttls()
             server.login(self.config['username'], self.config['password'])
             server.send_message(msg)
             server.quit()
             
-            logger.info(f"Email sent successfully to {to_email}")
+            attachment_info = f" with {len(attachments)} attachments" if attachments else ""
+            logger.info(f"Email sent successfully to {to_email}{attachment_info}")
             return True
             
         except Exception as e:
             logger.error(f"Failed to send email: {str(e)}")
             return False
+    
+    def _attach_file(self, msg, file_path):
+        """Attach file to email message"""
+        try:
+            # Guess the content type based on the file's extension
+            ctype, encoding = mimetypes.guess_type(file_path)
+            if ctype is None or encoding is not None:
+                ctype = 'application/octet-stream'
+            
+            maintype, subtype = ctype.split('/', 1)
+            
+            with open(file_path, 'rb') as fp:
+                attachment = MIMEBase(maintype, subtype)
+                attachment.set_payload(fp.read())
+                encoders.encode_base64(attachment)
+                
+                # Add header with filename
+                filename = Path(file_path).name
+                attachment.add_header(
+                    'Content-Disposition',
+                    f'attachment; filename= {filename}'
+                )
+                msg.attach(attachment)
+                
+        except Exception as e:
+            logger.error(f"Failed to attach file {file_path}: {str(e)}")
 
 class OllamaLLM:
     """Handle Ollama LLM interactions"""
@@ -399,7 +438,7 @@ async def send_automated_reply(to_email: str, subject: str, response_content: st
 
 @mcp.tool()
 async def check_and_respond_to_emails(ctx: Context | None = None) -> Dict[str, Any]:
-    """Complete workflow: Check emails, process with LLM, and send responses"""
+    """Complete workflow: Check emails, process with LLM, generate charts, and send responses with attachments"""
     try:
         # Check for new emails
         emails = await email_handler.get_filtered_emails(limit=3)
@@ -415,6 +454,11 @@ async def check_and_respond_to_emails(ctx: Context | None = None) -> Dict[str, A
         
         for email_data in emails:
             try:
+                # Analyze email content to determine if visualization is needed
+                email_content = email_data['body'].lower()
+                attachments = []
+                charts_generated = []
+                
                 # Enhanced LLM processing with context about available tools
                 context = f"""You are an AI assistant for a data analysis MCP server. You can:
                 1. Execute Python scripts for data visualization (bar charts, line graphs, pie charts)
@@ -428,35 +472,104 @@ async def check_and_respond_to_emails(ctx: Context | None = None) -> Dict[str, A
                 Email from: {email_data['from']}
                 Subject: {email_data['subject']}
                 
-                Please provide a helpful response. If they're asking for data analysis, offer to help with specific visualizations or insights."""
+                The user is asking: {email_data['body']}
                 
+                If they want data analysis or charts, I will generate the visualization and attach it to the email.
+                Please provide a helpful response mentioning the attached chart if one is generated."""
+                
+                # Generate visualizations based on email content
+                if any(keyword in email_content for keyword in ['sales', 'chart', 'graph', 'data', 'visualization', 'report', 'cash flow', 'traffic']):
+                    try:
+                        import subprocess
+                        import os
+                        
+                        # Determine best chart type based on request
+                        if 'sales' in email_content or 'category' in email_content:
+                            # Generate sales bar chart
+                            result = subprocess.run([
+                                'python3', str(SCRIPTS_DIR / 'bar_chart.py'),
+                                str(DATA_DIR / 'sales.csv'), 'category', 'sales_amount',
+                                '--title', 'Sales Analysis by Category - Email Response'
+                            ], capture_output=True, text=True)
+                            
+                        elif 'traffic' in email_content or 'trend' in email_content:
+                            # Generate line graph for trends
+                            result = subprocess.run([
+                                'python3', str(SCRIPTS_DIR / 'line_graph.py'),
+                                str(DATA_DIR / 'trends.csv'), 'date', 'value',
+                                '--title', 'Traffic/Trends Analysis - Email Response'
+                            ], capture_output=True, text=True)
+                            
+                        elif 'cash flow' in email_content or 'financial' in email_content:
+                            # Generate pie chart for sales distribution
+                            result = subprocess.run([
+                                'python3', str(SCRIPTS_DIR / 'pie_chart.py'),
+                                str(DATA_DIR / 'sales.csv'), 'region', 'sales_amount',
+                                '--title', 'Cash Flow by Region - Email Response'
+                            ], capture_output=True, text=True)
+                        else:
+                            # Default: sales bar chart
+                            result = subprocess.run([
+                                'python3', str(SCRIPTS_DIR / 'bar_chart.py'),
+                                str(DATA_DIR / 'sales.csv'), 'category', 'sales_amount',
+                                '--title', 'Data Analysis - Email Response'
+                            ], capture_output=True, text=True)
+                        
+                        if result.returncode == 0:
+                            # Extract output file path
+                            output_lines = result.stdout.split('\n')
+                            for line in output_lines:
+                                if 'File:' in line and '.png' in line:
+                                    chart_path = line.replace('File:', '').strip()
+                                    if os.path.exists(chart_path):
+                                        attachments.append(chart_path)
+                                        charts_generated.append(os.path.basename(chart_path))
+                                        logger.info(f"Generated chart: {chart_path}")
+                                    break
+                        else:
+                            logger.error(f"Chart generation failed: {result.stderr}")
+                            
+                    except Exception as chart_error:
+                        logger.error(f"Error generating chart: {str(chart_error)}")
+                
+                # Generate LLM response
                 llm_response = await ollama_llm.generate_response(
                     email_data['body'], context
                 )
                 
-                # Send reply
+                # Add attachment info to response if charts were generated
+                if attachments:
+                    chart_names = ', '.join(charts_generated)
+                    llm_response += f"\n\n📊 **Attached Analysis:**\nI've generated and attached the requested data visualization: `{chart_names}`. This chart provides a professional analysis of your data with timestamped formatting for your records.\n\nThe visualization is ready for your review and can be used in presentations or reports."
+                
+                # Send reply with attachments
                 reply_sent = await email_handler.send_email(
                     EMAIL_CONFIG['allowed_sender'],
                     f"Re: {email_data['subject']}",
-                    llm_response
+                    llm_response,
+                    attachments=attachments
                 )
                 
                 processed_emails.append({
                     "email_id": email_data['id'],
                     "subject": email_data['subject'],
                     "reply_sent": reply_sent,
-                    "response_preview": llm_response[:100] + "...",
-                    "full_response": llm_response
+                    "response_preview": llm_response[:150] + "...",
+                    "full_response": llm_response,
+                    "attachments": attachments,
+                    "charts_generated": len(attachments)
                 })
                 
             except Exception as email_error:
                 logger.error(f"Error processing individual email: {str(email_error)}")
                 continue
         
-        logger.info(f"Processed {len(processed_emails)} emails with automated responses")
+        total_charts = sum(email.get('charts_generated', 0) for email in processed_emails)
+        logger.info(f"Processed {len(processed_emails)} emails with {total_charts} chart attachments")
         return {
             "success": True,
             "processed_count": len(processed_emails),
+            "total_charts_generated": total_charts,
             "processed_emails": processed_emails,
             "allowed_sender": EMAIL_CONFIG['allowed_sender']
         }
