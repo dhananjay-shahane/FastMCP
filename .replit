@@ -36,7 +36,7 @@ args = "Ollama Server"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "Automated Email Processor"
+args = "LLM Only Email Processor"
 
 [[workflows.workflow]]
 name = "Flask Web Dashboard"
@@ -106,12 +106,12 @@ task = "shell.exec"
 args = "python test_email_simple.py"
 
 [[workflows.workflow]]
-name = "Automated Email Processor"
+name = "LLM Only Email Processor"
 author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python automated_email_processor.py"
+args = "python automated_email_processor_mcp_fixed.py"
 
 [workflows.workflow.metadata]
 outputType = "console"
