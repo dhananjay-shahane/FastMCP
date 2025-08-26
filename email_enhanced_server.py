@@ -25,6 +25,7 @@ from email.mime.multipart import MIMEMultipart as MimeMultipart
 from email.mime.base import MIMEBase
 from email import encoders
 from email.header import decode_header
+from email import utils as email_utils
 import mimetypes
 
 try:
@@ -77,14 +78,36 @@ class EmailHandler:
         self.config = config
         self.smtp_server = None
         self.imap_server = None
+        
+        # Validate email configuration
+        if not config.get('username') or not config.get('password'):
+            logger.error("Email credentials not configured properly")
+            logger.error("Please set EMAIL_USER and EMAIL_PASSWORD in .env file")
     
     async def connect_imap(self):
         """Connect to IMAP server"""
         try:
+            if not self.config.get('username') or not self.config.get('password'):
+                logger.error("Email credentials missing - cannot connect to IMAP")
+                return False
+                
+            # Close existing connection if any
+            if self.imap_server:
+                try:
+                    self.imap_server.close()
+                    self.imap_server.logout()
+                except:
+                    pass
+                    
+            logger.info(f"Connecting to IMAP server: {self.config['imap_server']}:{self.config['imap_port']}")
             self.imap_server = imaplib.IMAP4_SSL(self.config['imap_server'], self.config['imap_port'])
             self.imap_server.login(self.config['username'], self.config['password'])
             logger.info("Successfully connected to IMAP server")
             return True
+        except imaplib.IMAP4.error as e:
+            logger.error(f"IMAP authentication failed: {str(e)}")
+            logger.error("Check your email credentials and enable 'Less secure app access' or use App Password")
+            return False
         except Exception as e:
             logger.error(f"Failed to connect to IMAP: {str(e)}")
             return False
@@ -95,63 +118,145 @@ class EmailHandler:
             if not self.imap_server:
                 connected = await self.connect_imap()
                 if not connected or not self.imap_server:
+                    logger.error("Cannot retrieve emails - IMAP connection failed")
                     return []
             
-            self.imap_server.select(folder)
+            try:
+                self.imap_server.select(folder)
+                logger.info(f"Selected folder: {folder}")
+            except Exception as e:
+                logger.error(f"Failed to select folder {folder}: {str(e)}")
+                return []
             
             # Search for emails from specific sender
             search_criteria = f'FROM "{self.config["allowed_sender"]}"'
-            status, messages = self.imap_server.search(None, search_criteria)
+            logger.info(f"Searching for emails with criteria: {search_criteria}")
             
-            if status != 'OK':
+            try:
+                status, messages = self.imap_server.search(None, search_criteria)
+                
+                if status != 'OK':
+                    logger.error(f"Email search failed with status: {status}")
+                    return []
+                
+                if not messages or not messages[0]:
+                    logger.info(f"No emails found from {self.config['allowed_sender']}")
+                    return []
+                
+                email_ids = messages[0].split()
+                logger.info(f"Found {len(email_ids)} emails from {self.config['allowed_sender']}")
+                
+            except Exception as e:
+                logger.error(f"Email search failed: {str(e)}")
                 return []
             
-            email_ids = messages[0].split()
             emails = []
             
             # Get latest emails (limited)
-            for email_id in email_ids[-limit:]:
-                status, msg_data = self.imap_server.fetch(email_id, '(RFC822)')
-                if (status == 'OK' and msg_data and isinstance(msg_data, list) and 
-                    len(msg_data) > 0 and msg_data[0] and isinstance(msg_data[0], tuple) and 
-                    len(msg_data[0]) > 1 and isinstance(msg_data[0][1], bytes)):
-                    email_message = email_module.message_from_bytes(msg_data[0][1])
-                    
-                    # Decode subject
-                    subject = decode_header(email_message["Subject"])[0][0]
-                    if isinstance(subject, bytes):
-                        subject = subject.decode()
-                    
-                    # Get email body
-                    body = self._get_email_body(email_message)
-                    
-                    emails.append({
-                        'id': email_id.decode(),
-                        'from': email_message["From"],
-                        'subject': subject,
-                        'date': email_message["Date"],
-                        'body': body
-                    })
+            recent_ids = email_ids[-limit:] if len(email_ids) > limit else email_ids
             
-            logger.info(f"Retrieved {len(emails)} emails from {self.config['allowed_sender']}")
+            for email_id in reversed(recent_ids):  # Most recent first
+                try:
+                    status, msg_data = self.imap_server.fetch(email_id, '(RFC822)')
+                    if (status == 'OK' and msg_data and isinstance(msg_data, list) and 
+                        len(msg_data) > 0 and msg_data[0] and isinstance(msg_data[0], tuple) and 
+                        len(msg_data[0]) > 1 and isinstance(msg_data[0][1], bytes)):
+                        
+                        email_message = email_module.message_from_bytes(msg_data[0][1])
+                        
+                        # Decode subject safely
+                        subject = "No Subject"
+                        try:
+                            if email_message["Subject"]:
+                                subject_header = decode_header(email_message["Subject"])
+                                if subject_header and subject_header[0]:
+                                    subject = subject_header[0][0]
+                                    if isinstance(subject, bytes):
+                                        subject = subject.decode('utf-8', errors='ignore')
+                        except Exception as subject_error:
+                            logger.warning(f"Error decoding subject: {str(subject_error)}")
+                        
+                        # Get email body
+                        body = self._get_email_body(email_message)
+                        
+                        emails.append({
+                            'id': email_id.decode(),
+                            'from': email_message.get("From", "Unknown Sender"),
+                            'subject': subject,
+                            'date': email_message.get("Date", "Unknown Date"),
+                            'body': body
+                        })
+                        
+                        logger.info(f"Successfully parsed email: {subject[:50]}...")
+                        
+                except Exception as email_error:
+                    logger.error(f"Error parsing email {email_id}: {str(email_error)}")
+                    continue
+            
+            logger.info(f"Successfully retrieved {len(emails)} emails from {self.config['allowed_sender']}")
             return emails
             
         except Exception as e:
             logger.error(f"Error retrieving emails: {str(e)}")
+            # Try to reconnect
+            self.imap_server = None
             return []
     
     def _get_email_body(self, email_message):
         """Extract email body content"""
         try:
+            body_text = ""
+            
             if email_message.is_multipart():
                 for part in email_message.walk():
-                    if part.get_content_type() == "text/plain":
-                        return part.get_payload(decode=True).decode()
+                    content_type = part.get_content_type()
+                    content_disposition = str(part.get('Content-Disposition', ''))
+                    
+                    # Skip attachments
+                    if 'attachment' in content_disposition:
+                        continue
+                        
+                    if content_type == "text/plain":
+                        try:
+                            payload = part.get_payload(decode=True)
+                            if payload:
+                                body_text = payload.decode('utf-8', errors='ignore')
+                                break
+                        except Exception as decode_error:
+                            logger.warning(f"Error decoding text/plain part: {str(decode_error)}")
+                            continue
+                    
+                    elif content_type == "text/html" and not body_text:
+                        try:
+                            payload = part.get_payload(decode=True)
+                            if payload:
+                                # Simple HTML to text conversion (remove tags)
+                                import re
+                                html_content = payload.decode('utf-8', errors='ignore')
+                                body_text = re.sub('<[^<]+?>', '', html_content)
+                        except Exception as decode_error:
+                            logger.warning(f"Error decoding text/html part: {str(decode_error)}")
+                            continue
             else:
-                return email_message.get_payload(decode=True).decode()
+                # Simple message
+                try:
+                    payload = email_message.get_payload(decode=True)
+                    if payload:
+                        body_text = payload.decode('utf-8', errors='ignore')
+                except Exception as decode_error:
+                    logger.warning(f"Error decoding simple message: {str(decode_error)}")
+                    body_text = str(email_message.get_payload())
+            
+            # Clean up the body text
+            if body_text:
+                # Remove excessive whitespace
+                body_text = '\n'.join(line.strip() for line in body_text.split('\n') if line.strip())
+                
+            return body_text if body_text else "No readable content found"
+            
         except Exception as e:
             logger.error(f"Error extracting email body: {str(e)}")
-            return ""
+            return "Error reading email content"
     
     async def send_email(self, to_email: str, subject: str, body: str, attachments=None):
         """Send email response with optional attachments"""
@@ -349,13 +454,28 @@ async def read_script_resource(filename: str) -> str:
 async def check_filtered_emails(limit: int = 5, ctx: Context | None = None) -> Dict[str, Any]:
     """Check for new emails from allowed sender only"""
     try:
+        logger.info(f"Starting email check for {EMAIL_CONFIG['allowed_sender']}")
+        
+        # Check configuration first
+        if not EMAIL_CONFIG.get('username') or not EMAIL_CONFIG.get('password'):
+            return {
+                "success": False,
+                "error": "Email credentials not configured. Please set EMAIL_USER and EMAIL_PASSWORD in .env file"
+            }
+        
         emails = await email_handler.get_filtered_emails(limit=limit)
         
-        logger.info(f"Checked emails: found {len(emails)} from {EMAIL_CONFIG['allowed_sender']}")
+        logger.info(f"Email check completed: found {len(emails)} from {EMAIL_CONFIG['allowed_sender']}")
+        
         return {
             "success": True,
             "emails_found": len(emails),
             "allowed_sender": EMAIL_CONFIG['allowed_sender'],
+            "email_config": {
+                "username": EMAIL_CONFIG['username'],
+                "imap_server": EMAIL_CONFIG['imap_server'],
+                "credentials_configured": bool(EMAIL_CONFIG.get('username') and EMAIL_CONFIG.get('password'))
+            },
             "emails": emails
         }
         
@@ -363,7 +483,11 @@ async def check_filtered_emails(limit: int = 5, ctx: Context | None = None) -> D
         logger.error(f"Error checking emails: {str(e)}")
         return {
             "success": False,
-            "error": f"Failed to check emails: {str(e)}"
+            "error": f"Failed to check emails: {str(e)}",
+            "email_config": {
+                "username": EMAIL_CONFIG.get('username', 'NOT SET'),
+                "credentials_configured": bool(EMAIL_CONFIG.get('username') and EMAIL_CONFIG.get('password'))
+            }
         }
 
 @mcp.tool()
