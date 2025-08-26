@@ -1,0 +1,99 @@
+MCP server built in Python using the official MCP Python SDK (FastMCP).
+
+Exposes the following Resources:
+
+CSV files under /data folder accessible via file://data/{filename} URIs.
+
+Python scripts under /scripts folder via dynamic execution.
+
+Exposes Tools:
+
+Script execution (execute_file) to run Python scripts dynamically and generate plots/charts.
+
+Email sending/receiving tools for fully automated email-driven workflows.
+
+Integrated with the local Ollama LLM as the language model backend running locally, invoked through MCP client SDK.
+
+Supports remote MCP connection allowing tools and resources to be accessed from other platforms or MCP hosts remotely (e.g., Claude Desktop, custom clients).
+
+n8n workflows handle incoming emails, parse them, and send commands to MCP server tools.
+
+Web application backend implemented in Flask or FastAPI to provide a dashboard, upload interface, or status monitoring.
+
+Core System Prompt to Be Used by LLM Agent via MCP
+text
+You are an autonomous AI agent connected to a local MCP server exposing:
+
+- CSV data files as resources accessible via "file://data/{filename}".
+- Python scripts under the "scripts" folder callable as execution tools to generate plots, statistics, and visualizations.
+- Email communication tools to receive user requests and reply with data insights or chart images.
+
+Your responsibilities:
+
+1. Parse user email requests to identify if they seek data analysis or visualization.
+2. For data questions, use the CSV resources to provide direct answers.
+3. For visualization requests:
+   a. Determine if there is an existing plotting script for the request.
+   b. If yes, run the script via the MCP execution tool.
+   c. Otherwise, dynamically generate Python plotting code, execute it, and generate an image.
+4. Send the results (data or images) back to the user via the MCP email tool.
+5. All execution and data access should be local, using the Ollama LLM along with MCP tools.
+6. Support remote MCP client connections to securely allow external systems access to your server's capabilities.
+Recommended Project File Structure
+text
+/web-app
+  /scripts
+    bar_chart.py
+    line_graph.py
+    pie_chart.py
+    custom_stats.py
+    email_utils.py
+  /data
+    sales.csv
+    users.csv
+    trends.csv
+  mcp_config.yaml       # MCP server config for remote exposure and authentication
+  n8n_workflows.json    # n8n automation workflows for email routing and triggering MCP tools
+  app.py                # Flask or FastAPI web app entrypoint
+  server.py             # MCP Python SDK server implementation exposing resources and tools
+Example MCP Server Tool & Resource Registration Pattern (Python SDK)
+python
+from mcp.server.fastmcp import FastMCP, Context
+import subprocess
+import os
+
+mcp = FastMCP("DataVizServer")
+
+# Resources
+@mcp.resource("file://data/{filename}")
+def read_csv(filename: str):
+    path = os.path.join("./data", filename)
+    with open(path, "r") as f:
+        return f.read()
+
+# Tools
+@mcp.tool()
+def execute_script(script_name: str, args: list[str], ctx: Context) -> str:
+    script_path = os.path.join("./scripts", script_name)
+    result = subprocess.run(["python", script_path] + args, capture_output=True)
+    if result.returncode != 0:
+        return f"Error: {result.stderr.decode()}"
+    return "Script executed successfully."
+
+@mcp.tool()
+def send_email(to: str, subject: str, body: str, attachments: list[str]):
+    # Implement SMTP or wrap email_utils.py functions here
+    pass
+
+if __name__ == "__main__":
+    mcp.run()
+Remote MCP Server Configuration Example for Clients (e.g. Claude Desktop, VS Code)
+json
+{
+  "servers": {
+    "dataviz": {
+      "type": "http",
+      "url": "https://your-server-host.com/mcp"
+    }
+  }
+}
