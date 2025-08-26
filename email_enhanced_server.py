@@ -388,7 +388,7 @@ class OllamaLLM:
             logger.warning(f"Ollama server not available: {str(e)}")
             return False
     
-    async def generate_response(self, prompt: str, context: str = ""):
+    async def generate_response(self, prompt: str, context: str = "", timeout: int = 15):
         """Generate response using Ollama"""
         try:
             full_prompt = f"""You are an AI assistant for a comprehensive data analysis MCP server system. 
@@ -413,45 +413,30 @@ Please provide a helpful response:"""
                 "stream": False
             }
             
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
                 async with session.post(
                     f"{self.base_url}/api/generate",
-                    json=payload,
-                    timeout=self.timeout
+                    json=payload
                 ) as response:
                     if response.status == 200:
                         result = await response.json()
-                        return result.get('response', 'Sorry, I could not generate a response.')
+                        response_text = result.get('response', '').strip()
+                        if response_text:
+                            logger.info(f"Generated LLM response: {len(response_text)} chars")
+                            return response_text
+                        else:
+                            logger.warning("Empty response from Ollama LLM")
+                            return ""
                     else:
-                        logger.error(f"Ollama API error: {response.status}")
-                        return "Sorry, there was an error generating the response."
+                        logger.warning(f"Ollama API error: {response.status}")
+                        return ""
                         
+        except asyncio.TimeoutError:
+            logger.warning(f"Ollama request timed out after {timeout}s")
+            return ""
         except Exception as e:
             logger.warning(f"Error generating Ollama response: {str(e)}")
-            # Fallback response when Ollama is unavailable
-            return f"""Thank you for your email! 
-
-I'm an AI assistant for data analysis and visualization. I can help you with:
-
-📊 **Data Visualization Services:**
-- Bar charts, line graphs, and pie charts from CSV data
-- High-quality PNG outputs with timestamps
-- Statistical analysis and insights
-
-📁 **Currently Available:**
-- CSV files in the data directory
-- Python analysis scripts (bar_chart.py, line_graph.py, pie_chart.py)
-- Automated report generation
-
-To use these services, please:
-1. Upload your CSV data files
-2. Specify what type of visualization you need
-3. I'll generate timestamped PNG files for you
-
-The system will be back to full AI-powered responses once Ollama is running locally. For immediate assistance, please specify your data analysis needs.
-
-Best regards,
-Your Data Analysis Assistant"""
+            return ""
 
 # Initialize handlers
 email_handler = EmailHandler(EMAIL_CONFIG)
