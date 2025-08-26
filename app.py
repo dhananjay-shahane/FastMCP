@@ -313,12 +313,20 @@ def api_execute_script():
 
 @app.errorhandler(404)
 def not_found_error(error):
-    return render_template('dashboard.html', error="Page not found"), 404
+    return render_template('dashboard.html', 
+                         error="Page not found",
+                         mcp_running=False,
+                         file_stats={},
+                         recent_files=[]), 404
 
 @app.errorhandler(500)
 def internal_error(error):
     logger.error(f"Internal server error: {str(error)}")
-    return render_template('dashboard.html', error="Internal server error"), 500
+    return render_template('dashboard.html', 
+                         error="Internal server error",
+                         mcp_running=False,
+                         file_stats={},
+                         recent_files=[]), 500
 
 if __name__ == '__main__':
     # Ensure required directories exist
