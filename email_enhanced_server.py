@@ -62,7 +62,7 @@ EMAIL_CONFIG = {
     'imap_port': 993,
     'username': os.getenv('EMAIL_USER'),
     'password': os.getenv('EMAIL_PASSWORD'),
-    'allowed_sender': 'dhananjayshahane24@gmail.com'  # Filter emails only from this address
+    'allowed_sender': os.getenv('EMAIL_USER', 'dhanushahane01@gmail.com')  # Use same email as sender for testing
 }
 
 OLLAMA_CONFIG = {
@@ -115,18 +115,33 @@ class EmailHandler:
     async def get_filtered_emails(self, folder='INBOX', limit=10):
         """Get emails only from allowed sender"""
         try:
-            if not self.imap_server:
-                connected = await self.connect_imap()
-                if not connected or not self.imap_server:
-                    logger.error("Cannot retrieve emails - IMAP connection failed")
-                    return []
+            # Always try to connect fresh
+            connected = await self.connect_imap()
+            if not connected or not self.imap_server:
+                logger.error("Cannot retrieve emails - IMAP connection failed")
+                return []
             
             try:
-                self.imap_server.select(folder)
-                logger.info(f"Selected folder: {folder}")
+                status, count = self.imap_server.select(folder)
+                if status != 'OK':
+                    logger.error(f"Failed to select folder {folder}")
+                    return []
+                logger.info(f"Selected folder: {folder}, Total emails: {count[0].decode()}")
             except Exception as e:
                 logger.error(f"Failed to select folder {folder}: {str(e)}")
                 return []
+            
+            # First search for all emails to check connectivity
+            try:
+                status, all_messages = self.imap_server.search(None, 'ALL')
+                if status == 'OK' and all_messages[0]:
+                    total_emails = len(all_messages[0].split())
+                    logger.info(f"Total emails in INBOX: {total_emails}")
+                else:
+                    logger.warning("No emails found in INBOX at all")
+                    
+            except Exception as e:
+                logger.error(f"Failed to search all emails: {str(e)}")
             
             # Search for emails from specific sender
             search_criteria = f'FROM "{self.config["allowed_sender"]}"'
@@ -141,6 +156,19 @@ class EmailHandler:
                 
                 if not messages or not messages[0]:
                     logger.info(f"No emails found from {self.config['allowed_sender']}")
+                    # Try broader search for debugging
+                    logger.info("Trying to find recent emails from any sender...")
+                    status, recent = self.imap_server.search(None, 'ALL')
+                    if status == 'OK' and recent[0]:
+                        recent_ids = recent[0].split()[-5:]  # Last 5 emails
+                        logger.info(f"Found {len(recent_ids)} recent emails total")
+                        for email_id in recent_ids:
+                            try:
+                                status, msg_data = self.imap_server.fetch(email_id, '(ENVELOPE)')
+                                if status == 'OK':
+                                    logger.info(f"Recent email from: {msg_data}")
+                            except:
+                                pass
                     return []
                 
                 email_ids = messages[0].split()
@@ -261,12 +289,21 @@ class EmailHandler:
     async def send_email(self, to_email: str, subject: str, body: str, attachments=None):
         """Send email response with optional attachments"""
         try:
+            if not self.config.get('username') or not self.config.get('password'):
+                logger.error("Email credentials not configured for sending")
+                return False
+                
+            logger.info(f"Attempting to send email to: {to_email}")
+            logger.info(f"Subject: {subject}")
+            logger.info(f"Using SMTP server: {self.config['smtp_server']}:{self.config['smtp_port']}")
+            
             msg = MimeMultipart()
             msg['From'] = self.config['username']
             msg['To'] = to_email
             msg['Subject'] = subject
+            msg['Date'] = email_utils.formatdate(localtime=True)
             
-            msg.attach(MimeText(body, 'plain'))
+            msg.attach(MimeText(body, 'plain', 'utf-8'))
             
             # Add attachments if provided
             if attachments:
@@ -277,16 +314,30 @@ class EmailHandler:
                     else:
                         logger.warning(f"Attachment not found: {attachment_path}")
             
+            # Connect and send
+            logger.info("Connecting to SMTP server...")
             server = smtplib.SMTP(self.config['smtp_server'], self.config['smtp_port'])
+            server.set_debuglevel(1)  # Enable SMTP debugging
             server.starttls()
+            logger.info("STARTTLS successful, logging in...")
             server.login(self.config['username'], self.config['password'])
-            server.send_message(msg)
+            logger.info("Login successful, sending message...")
+            
+            text = msg.as_string()
+            server.sendmail(self.config['username'], [to_email], text)
             server.quit()
             
             attachment_info = f" with {len(attachments)} attachments" if attachments else ""
-            logger.info(f"Email sent successfully to {to_email}{attachment_info}")
+            logger.info(f"✅ Email sent successfully to {to_email}{attachment_info}")
             return True
             
+        except smtplib.SMTPAuthenticationError as e:
+            logger.error(f"SMTP Authentication failed: {str(e)}")
+            logger.error("Check your email credentials and enable App Password if using Gmail")
+            return False
+        except smtplib.SMTPException as e:
+            logger.error(f"SMTP error occurred: {str(e)}")
+            return False
         except Exception as e:
             logger.error(f"Failed to send email: {str(e)}")
             return False
@@ -454,16 +505,39 @@ async def read_script_resource(filename: str) -> str:
 async def check_filtered_emails(limit: int = 5, ctx: Context | None = None) -> Dict[str, Any]:
     """Check for new emails from allowed sender only"""
     try:
+        print(f"\n🔍 CHECKING EMAILS FROM: {EMAIL_CONFIG['allowed_sender']}")
+        print(f"📧 Email Account: {EMAIL_CONFIG['username']}")
+        print(f"🌐 IMAP Server: {EMAIL_CONFIG['imap_server']}:{EMAIL_CONFIG['imap_port']}")
+        
         logger.info(f"Starting email check for {EMAIL_CONFIG['allowed_sender']}")
         
         # Check configuration first
         if not EMAIL_CONFIG.get('username') or not EMAIL_CONFIG.get('password'):
+            error_msg = "Email credentials not configured. Please set EMAIL_USER and EMAIL_PASSWORD in .env file"
+            print(f"❌ {error_msg}")
             return {
                 "success": False,
-                "error": "Email credentials not configured. Please set EMAIL_USER and EMAIL_PASSWORD in .env file"
+                "error": error_msg
             }
         
+        print("📡 Connecting to email server...")
         emails = await email_handler.get_filtered_emails(limit=limit)
+        
+        print(f"\n📨 EMAIL CHECK RESULTS:")
+        print(f"   • Total emails found: {len(emails)}")
+        print(f"   • From sender: {EMAIL_CONFIG['allowed_sender']}")
+        
+        if emails:
+            print(f"\n📋 RECENT EMAILS:")
+            for i, email in enumerate(emails[:3], 1):
+                print(f"   {i}. Subject: {email['subject'][:50]}...")
+                print(f"      From: {email['from']}")
+                print(f"      Date: {email['date']}")
+                print(f"      Preview: {email['body'][:100]}...")
+                print()
+        else:
+            print(f"   ℹ️  No emails found from {EMAIL_CONFIG['allowed_sender']}")
+            print(f"   💡 Make sure emails are sent from exactly: {EMAIL_CONFIG['allowed_sender']}")
         
         logger.info(f"Email check completed: found {len(emails)} from {EMAIL_CONFIG['allowed_sender']}")
         
@@ -480,10 +554,12 @@ async def check_filtered_emails(limit: int = 5, ctx: Context | None = None) -> D
         }
         
     except Exception as e:
+        error_msg = f"Failed to check emails: {str(e)}"
+        print(f"❌ ERROR: {error_msg}")
         logger.error(f"Error checking emails: {str(e)}")
         return {
             "success": False,
-            "error": f"Failed to check emails: {str(e)}",
+            "error": error_msg,
             "email_config": {
                 "username": EMAIL_CONFIG.get('username', 'NOT SET'),
                 "credentials_configured": bool(EMAIL_CONFIG.get('username') and EMAIL_CONFIG.get('password'))
@@ -528,18 +604,28 @@ async def process_email_with_llm(email_content: str, sender: str, subject: str, 
 async def send_automated_reply(to_email: str, subject: str, response_content: str, ctx: Context | None = None) -> Dict[str, Any]:
     """Send automated reply email"""
     try:
+        print(f"\n📤 SENDING AUTOMATED REPLY")
+        print(f"   📧 To: {to_email}")
+        print(f"   📝 Subject: {subject}")
+        
         # Verify recipient is the allowed sender
         if to_email != EMAIL_CONFIG['allowed_sender']:
+            error_msg = f"Can only send replies to {EMAIL_CONFIG['allowed_sender']}"
+            print(f"   ❌ {error_msg}")
             return {
                 "success": False,
-                "error": f"Can only send replies to {EMAIL_CONFIG['allowed_sender']}"
+                "error": error_msg
             }
         
         # Send email
         reply_subject = f"Re: {subject}" if not subject.startswith("Re:") else subject
+        print(f"   📨 Final Subject: {reply_subject}")
+        print(f"   📄 Content Preview: {response_content[:100]}...")
+        
         success = await email_handler.send_email(to_email, reply_subject, response_content)
         
         if success:
+            print(f"   ✅ Reply sent successfully!")
             logger.info(f"Automated reply sent to {to_email}")
             return {
                 "success": True,
@@ -548,16 +634,19 @@ async def send_automated_reply(to_email: str, subject: str, response_content: st
                 "message": "Reply sent successfully"
             }
         else:
+            print(f"   ❌ Failed to send reply")
             return {
                 "success": False,
                 "error": "Failed to send email"
             }
         
     except Exception as e:
+        error_msg = f"Failed to send reply: {str(e)}"
+        print(f"   ❌ ERROR: {error_msg}")
         logger.error(f"Error sending automated reply: {str(e)}")
         return {
             "success": False,
-            "error": f"Failed to send reply: {str(e)}"
+            "error": error_msg
         }
 
 @mcp.tool()
@@ -957,6 +1046,26 @@ if __name__ == "__main__":
     SCRIPTS_DIR.mkdir(exist_ok=True)
     LOGS_DIR.mkdir(exist_ok=True)
     OUTPUT_DIR.mkdir(exist_ok=True)
+    
+    print(f"\n🚀 ENHANCED EMAIL MCP SERVER STARTING...")
+    print(f"📧 Email Account: {EMAIL_CONFIG['username']}")
+    print(f"🔍 Allowed Sender: {EMAIL_CONFIG['allowed_sender']}")
+    print(f"🌐 SMTP: {EMAIL_CONFIG['smtp_server']}:{EMAIL_CONFIG['smtp_port']}")
+    print(f"🌐 IMAP: {EMAIL_CONFIG['imap_server']}:{EMAIL_CONFIG['imap_port']}")
+    print(f"🤖 Ollama: {OLLAMA_CONFIG['base_url']} (Model: {OLLAMA_CONFIG['model']})")
+    print(f"📁 Data: {DATA_DIR}")
+    print(f"📁 Scripts: {SCRIPTS_DIR}")
+    
+    if not EMAIL_CONFIG.get('username') or not EMAIL_CONFIG.get('password'):
+        print(f"⚠️  WARNING: Email credentials not configured!")
+        print(f"   Please set EMAIL_USER and EMAIL_PASSWORD in .env file")
+    else:
+        print(f"✅ Email credentials configured")
+    
+    print(f"\n💡 To test email functionality, run: python test_email_simple.py")
+    print(f"💡 To check emails via MCP, use the 'check_filtered_emails' tool")
+    print(f"💡 To send test reply, use the 'send_automated_reply' tool")
+    print(f"\n🔄 Starting MCP server...\n")
     
     logger.info("Starting Enhanced Email MCP Server...")
     logger.info(f"Email filtering: Only {EMAIL_CONFIG['allowed_sender']}")

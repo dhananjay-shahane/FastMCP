@@ -92,6 +92,15 @@ waitForPort = 11434
 [workflows.workflow.metadata]
 outputType = "console"
 
+[[workflows.workflow]]
+name = "Test Email Functionality"
+author = 46909127
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python test_email_simple.py"
+
 [[ports]]
 localPort = 5000
 externalPort = 80
