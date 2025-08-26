@@ -196,13 +196,21 @@ class OllamaLLM:
     async def generate_response(self, prompt: str, context: str = ""):
         """Generate response using Ollama"""
         try:
-            full_prompt = f"""You are an AI assistant helping with data analysis requests via email. 
+            full_prompt = f"""You are an AI assistant for a comprehensive data analysis MCP server system. 
 
-Context: {context}
+{context}
 
 Email Content: {prompt}
 
-Please provide a helpful response. If the email is asking for data analysis, explain what analysis you can perform with CSV data files. Be professional and concise."""
+Instructions:
+- Be professional and helpful
+- If they ask for data analysis, offer specific visualizations (bar charts, line graphs, pie charts)
+- Mention that you can generate timestamped PNG files in the output directory
+- If they provide data or ask about specific datasets, offer relevant analysis
+- Keep responses concise but informative
+- Always offer to help with next steps
+
+Please provide a helpful response:"""
 
             payload = {
                 "model": self.model,
@@ -384,10 +392,23 @@ async def check_and_respond_to_emails(ctx: Context | None = None) -> Dict[str, A
         
         for email_data in emails:
             try:
-                # Process with LLM
+                # Enhanced LLM processing with context about available tools
+                context = f"""You are an AI assistant for a data analysis MCP server. You can:
+                1. Execute Python scripts for data visualization (bar charts, line graphs, pie charts)
+                2. Analyze CSV data files in the data directory
+                3. Generate timestamped PNG visualizations in the output directory
+                4. Provide statistical analysis and insights
+                
+                Available CSV files: {await get_available_csv_files()}
+                Available scripts: {await get_available_scripts()}
+                
+                Email from: {email_data['from']}
+                Subject: {email_data['subject']}
+                
+                Please provide a helpful response. If they're asking for data analysis, offer to help with specific visualizations or insights."""
+                
                 llm_response = await ollama_llm.generate_response(
-                    email_data['body'], 
-                    f"Email from: {email_data['from']}, Subject: {email_data['subject']}"
+                    email_data['body'], context
                 )
                 
                 # Send reply
@@ -401,7 +422,8 @@ async def check_and_respond_to_emails(ctx: Context | None = None) -> Dict[str, A
                     "email_id": email_data['id'],
                     "subject": email_data['subject'],
                     "reply_sent": reply_sent,
-                    "response_preview": llm_response[:100] + "..."
+                    "response_preview": llm_response[:100] + "...",
+                    "full_response": llm_response
                 })
                 
             except Exception as email_error:
@@ -463,7 +485,26 @@ async def check_system_status(ctx: Context | None = None) -> Dict[str, Any]:
             "error": f"Failed to check system status: {str(e)}"
         }
 
-# Keep existing script execution tools
+# Helper functions for email processing
+async def get_available_csv_files() -> List[str]:
+    """Get list of available CSV files"""
+    try:
+        if DATA_DIR.exists():
+            return [f.name for f in DATA_DIR.glob("*.csv")]
+        return []
+    except:
+        return []
+
+async def get_available_scripts() -> List[str]:
+    """Get list of available Python scripts"""
+    try:
+        if SCRIPTS_DIR.exists():
+            return [f.name for f in SCRIPTS_DIR.glob("*.py")]
+        return []
+    except:
+        return []
+
+# Enhanced script execution tools
 @mcp.tool()
 async def execute_script(script_name: str, args: List[str] = [], ctx: Context | None = None) -> Dict[str, Any]:
     """Execute Python scripts dynamically and return results"""
@@ -553,6 +594,103 @@ async def list_available_resources(ctx: Context | None = None) -> Dict[str, Any]
             "error": f"Failed to list resources: {str(e)}"
         }
 
+# Additional MCP tools for enhanced email processing
+@mcp.tool()
+async def process_email_and_execute_analysis(email_content: str, csv_file: str = "", analysis_type: str = "summary", ctx: Context | None = None) -> Dict[str, Any]:
+    """Process email request and execute data analysis if requested"""
+    try:
+        # First understand the email with LLM
+        context = f"""Available CSV files: {await get_available_csv_files()}
+        Available scripts: bar_chart.py, line_graph.py, pie_chart.py, simple_stats.py
+        Analysis types: bar_chart, line_graph, pie_chart, statistics
+        
+        Determine if this email is requesting data analysis and what type."""
+        
+        llm_analysis = await ollama_llm.generate_response(email_content, context)
+        
+        result = {
+            "success": True,
+            "email_analysis": llm_analysis,
+            "analysis_executed": False,
+            "output_files": []
+        }
+        
+        # If CSV file and analysis type provided, execute it
+        if csv_file and analysis_type in ['bar_chart', 'line_graph', 'pie_chart']:
+            script_name = f"{analysis_type}.py"
+            execution_result = await execute_script(script_name, [csv_file])
+            
+            if execution_result.get('success'):
+                result["analysis_executed"] = True
+                result["execution_output"] = execution_result.get('output', '')
+                # Extract output file from execution result
+                output_lines = execution_result.get('output', '').split('\n')
+                for line in output_lines:
+                    if 'File:' in line and '.png' in line:
+                        result["output_files"].append(line.replace('File:', '').strip())
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error processing email analysis: {str(e)}")
+        return {
+            "success": False,
+            "error": f"Failed to process analysis: {str(e)}"
+        }
+
+@mcp.tool()
+async def smart_email_response(email_content: str, sender: str, subject: str, auto_send: bool = False, ctx: Context | None = None) -> Dict[str, Any]:
+    """Generate intelligent email response with potential data analysis"""
+    try:
+        # Get available resources
+        csv_files = await get_available_csv_files()
+        scripts = await get_available_scripts()
+        
+        # Enhanced context for LLM
+        context = f"""You are responding to an email about data analysis services.
+        
+        Available CSV files: {', '.join(csv_files)}
+        Available analysis scripts: {', '.join(scripts)}
+        
+        You can:
+        1. Generate bar charts, line graphs, and pie charts from CSV data
+        2. Provide statistical analysis and insights
+        3. Create timestamped PNG visualizations saved to output directory
+        4. Process data from the available CSV files
+        
+        Email from: {sender}
+        Subject: {subject}
+        
+        Provide a helpful, professional response. If they're asking for specific analysis, offer to help and mention what visualizations you can create."""
+        
+        llm_response = await ollama_llm.generate_response(email_content, context)
+        
+        result = {
+            "success": True,
+            "generated_response": llm_response,
+            "sender": sender,
+            "subject": subject,
+            "email_sent": False
+        }
+        
+        # Auto-send if requested
+        if auto_send and sender == EMAIL_CONFIG['allowed_sender']:
+            reply_sent = await email_handler.send_email(
+                sender,
+                f"Re: {subject}" if not subject.startswith("Re:") else subject,
+                llm_response
+            )
+            result["email_sent"] = reply_sent
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error generating smart response: {str(e)}")
+        return {
+            "success": False,
+            "error": f"Failed to generate response: {str(e)}"
+        }
+
 if __name__ == "__main__":
     # Ensure directories exist
     DATA_DIR.mkdir(exist_ok=True)
@@ -562,7 +700,7 @@ if __name__ == "__main__":
     
     logger.info("Starting Enhanced Email MCP Server...")
     logger.info(f"Email filtering: Only {EMAIL_CONFIG['allowed_sender']}")
-    logger.info(f"Ollama LLM: {OLLAMA_CONFIG['base_url']}")
+    logger.info(f"Ollama LLM: {OLLAMA_CONFIG['base_url']} (Model: {OLLAMA_CONFIG['model']})")
     logger.info(f"Data directory: {DATA_DIR}")
     logger.info(f"Scripts directory: {SCRIPTS_DIR}")
     
