@@ -26,6 +26,10 @@ args = "MCP Server"
 task = "workflow.run"
 args = "HTTP MCP Server"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Email Enhanced MCP Server"
+
 [[workflows.workflow]]
 name = "Flask Web Dashboard"
 author = "agent"
@@ -57,6 +61,17 @@ author = "agent"
 task = "shell.exec"
 args = "python http_mcp_server.py"
 waitForPort = 8001
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow]]
+name = "Email Enhanced MCP Server"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python email_enhanced_server.py"
 
 [workflows.workflow.metadata]
 outputType = "console"

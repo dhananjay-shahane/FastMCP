@@ -10,16 +10,19 @@ import sys
 import asyncio
 import aiohttp
 import json
-import email
 import imaplib
 import smtplib
+import ssl
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-from email.mime.text import MimeText
-from email.mime.multipart import MimeMultipart
-from email.header import decode_header
-import ssl
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Email related imports - use same pattern as working server.py
+import email as email_module
+from email.mime.text import MIMEText as MimeText
+from email.mime.multipart import MIMEMultipart as MimeMultipart
+from email.header import decode_header
 
 try:
     from fastmcp import FastMCP, Context
@@ -44,20 +47,23 @@ SCRIPTS_DIR = SCRIPT_DIR / "scripts"
 OUTPUT_DIR = SCRIPT_DIR / "output"
 LOGS_DIR = SCRIPT_DIR / "logs"
 
-# Email and LLM Configuration
+# Load environment variables
+load_dotenv()
+
+# Email and LLM Configuration from .env file
 EMAIL_CONFIG = {
-    'smtp_server': 'smtp.gmail.com',
-    'smtp_port': 587,
+    'smtp_server': os.getenv('MAIL_SERVER', 'smtp.gmail.com'),
+    'smtp_port': int(os.getenv('MAIL_PORT', '587')),
     'imap_server': 'imap.gmail.com',
     'imap_port': 993,
-    'username': 'dhanushahane01@gmail.com',
-    'password': 'sljo pinu ajrh padp',
-    'allowed_sender': 'dhananjayshahane24@gmail.com'  # Filter emails only from this address
+    'username': os.getenv('EMAIL_USER'),
+    'password': os.getenv('EMAIL_PASSWORD'),
+    'allowed_sender': 'dhananjayshahahne24@gmail.com'  # Filter emails only from this address
 }
 
 OLLAMA_CONFIG = {
-    'base_url': 'http://127.0.0.1:11434',
-    'model': 'llama3.2',  # Default model, can be changed
+    'base_url': os.getenv('OLLAMA_BASE_URL', 'http://127.0.0.1:11434'),
+    'model': 'llama3.2:1b',  # Using the specific model requested
     'timeout': 30
 }
 
@@ -102,7 +108,7 @@ class EmailHandler:
             for email_id in email_ids[-limit:]:
                 status, msg_data = self.imap_server.fetch(email_id, '(RFC822)')
                 if status == 'OK':
-                    email_message = email.message_from_bytes(msg_data[0][1])
+                    email_message = email_module.message_from_bytes(msg_data[0][1])
                     
                     # Decode subject
                     subject = decode_header(email_message["Subject"])[0][0]
