@@ -34,6 +34,10 @@ args = "Email Enhanced MCP Server"
 task = "workflow.run"
 args = "Ollama Server"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Automated Email Processor"
+
 [[workflows.workflow]]
 name = "Flask Web Dashboard"
 author = "agent"
@@ -100,6 +104,17 @@ mode = "sequential"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python test_email_simple.py"
+
+[[workflows.workflow]]
+name = "Automated Email Processor"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python automated_email_processor.py"
+
+[workflows.workflow.metadata]
+outputType = "console"
 
 [[ports]]
 localPort = 5000

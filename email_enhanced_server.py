@@ -62,7 +62,7 @@ EMAIL_CONFIG = {
     'imap_port': 993,
     'username': os.getenv('EMAIL_USER'),
     'password': os.getenv('EMAIL_PASSWORD'),
-    'allowed_sender': os.getenv('EMAIL_USER', 'dhanushahane01@gmail.com')  # Use same email as sender for testing
+    'allowed_sender': 'dhananjayshahane24@gmail.com'  # Fixed to process emails from the correct sender
 }
 
 OLLAMA_CONFIG = {
